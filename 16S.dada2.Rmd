@@ -1,0 +1,173 @@
+---
+title: "16S.dada2.R"
+author: "Heather Deel"
+date: "2023-05-04"
+output: html_document
+---
+
+#########################################################
+###             Example 4: fastq files                ###
+###                                                   ###
+###      Standard dada2 batch file for myPhyloDB      ###
+###       Advanced users, may wish to change the      ###
+###   pipeline; however, please note that file names  ###
+###       will need to be changed accordingly.        ###
+###                                                   ###
+###        created for: myPhyloDB v1.2.1              ###
+###              www.myphylodb.org                    ###
+###        created by: Daniel K. Manter               ###
+###              daniel.manter@ars.usda.gov           ###
+###        date: August 23, 2017                      ###
+#########################################################
+
+### Check and load for required packages
+```{r}
+.cran_packages <-  c("ggplot2", "gridExtra", "Biostrings")
+.bioc_packages <- c("dada2", "phyloseq")
+sapply(c(.cran_packages, .bioc_packages), require, character.only=TRUE)
+```
+
+### Get data 
+```{r}
+set.seed(100)
+path <- ('mothur/temp')
+dir.create('mothur/temp/Forward')
+dir.create('mothur/temp/Reverse')
+
+file_info <- read.csv('mothur/temp/temp.files', sep='\t', header=FALSE)
+sample.names <- file_info[,1]
+sample.names
+
+fastqFs <- file_info[,2]
+fastqFs
+
+fastqRs <- file_info[,3]
+fastqRs
+
+```
+
+### Remove Primers w/ cutadapt 
+```{r}
+dir.create('mothur/temp/Forward/Cut')
+dir.create('mothur/temp/Reverse/Cut')
+cutpathF <- file.path("mothur/temp/Forward/Cut")
+cutpathR <- file.path("mothur/temp/Reverse/Cut")
+
+# select one forward primer
+#primerF <- 'AGAGTTTGATCMTGGCTCAG' # 27F
+primerF <- 'CCTACGGGNGGCWGCAG'    # 341f
+#primerF <- 'GTGYCAGCMGCCGCGGTAA'  # 515fb
+
+# select one reverse primer
+#primerR <- 'TTACCGCGGCKGCTGGCAC' # 515r
+primerR <- 'GGACTACNVGGGTWTCTAAT'  # 806rb
+  
+# remove primers
+for(i in 1:length(fastqFs)) {
+  infileF = file.path(path, fastqFs[i])
+  outfileF = file.path(cutpathF, fastqFs[i])
+  infileR = file.path(path, fastqRs[i])
+  outfileR = file.path(cutpathR, fastqRs[i])
+  
+  cmd <- paste0('cutadapt',
+			   ' -g ^', primerF, ' -G ^', primerR, 
+			   ' -o ', outfileF, ' -p ', outfileR, 
+			   ' ', infileF, ' ', infileR)
+  system(cmd)
+}
+
+# create trimmedreference database
+infile = 'mothur/reference/dada2/gg_13_5_99.dkm.fa.gz'
+outfile = 'mothur/temp/ref_trimmed.fa.gz'
+
+rc_primerR <- as.character(reverseComplement(DNAString(primerR)))
+cmd <- paste0('cutadapt --trimmed-only',
+              ' -g ', primerF, '...', rc_primerR,
+              ' -o ', outfile, 
+              ' ', infile)
+system(cmd)
+```
+
+### Trim and filter 
+```{r}
+# Filtering: THESE PARAMETERS MAY NOT BE OPTIMAL FOR ALL DATASETS
+dir.create('mothur/temp/Forward/Filtered')
+dir.create('mothur/temp/Reverse/Filtered')
+filtpathF <- file.path("mothur/temp/Forward/Filtered")
+filtpathR <- file.path("mothur/temp/Reverse/Filtered")
+
+fastqFs <- list.files(cutpathF) # recreate list in case some samples did not have data
+fastqRs <- list.files(cutpathR) # recreate list in case some samples did not have data
+
+out <- filterAndTrim(fwd=file.path(cutpathF, fastqFs), filt=file.path(filtpathF, fastqFs),
+              rev=file.path(cutpathR, fastqRs), filt.rev=file.path(filtpathR, fastqRs),
+              rm.phix=TRUE,
+              compress=TRUE, verbose=TRUE, 
+              multithread=10)
+out
+```
+
+### Infer sequence variants
+```{r}
+filtFs <- list.files(filtpathF, full.names=TRUE)
+filtRs <- list.files(filtpathR, full.names=TRUE)
+
+# need to match file list with original sample names due to potential sorting issues
+# or missing data
+filtFs.base <- as.data.frame(list.files(filtpathF, full.names=FALSE))
+names(filtFs.base) <- c('dir_list')
+new_file_info <- merge(filtFs.base, file_info, by.x='dir_list', by.y='V2', sort=FALSE)
+sample.names <- new_file_info$V1
+
+names(filtFs) <- sample.names
+names(filtRs) <- sample.names
+
+# Learn error rates
+set.seed(100)
+errF <- learnErrors(filtFs, nreads=1e6, multithread=10)
+errR <- learnErrors(filtRs, nreads=1e6, multithread=10)
+
+# Sample inference and merger of paired-end reads
+mergers <- vector("list", length(sample.names))
+names(mergers) <- sample.names
+
+for(sam in sample.names) {
+  cat("Processing:", sam, "\n")
+  derepF <- derepFastq(filtFs[[sam]])
+  ddF <- dada(derepF, err=errF, multithread=10)
+  derepR <- derepFastq(filtRs[[sam]])
+  ddR <- dada(derepR, err=errR, multithread=10)
+  merger <- mergePairs(ddF, derepF, ddR, derepR,
+                       minOverlap=20, maxMismatch=0,
+                       verbose=TRUE)
+  mergers[[sam]] <- merger
+}
+
+# Construct sequence table
+seqtab <- makeSequenceTable(mergers)
+
+# Remove chimeras
+seqtab <- removeBimeraDenovo(seqtab, method="pooled", multithread=10)
+```
+
+### Export Files 
+```{r}
+# Representative Sequences
+numOtus <- ncol(seqtab)
+uniquesToFasta(seqtab, 
+  ids=paste0("OTU", seq(numOtus)),
+  fout='mothur/temp/dada.fasta'  # do not change name
+)
+
+# Mothur shared file
+otab <- otu_table(seqtab, taxa_are_rows=FALSE)
+colnames(otab) <- paste0("OTU", seq(ncol(otab)))
+otab <- data.frame(otab)
+df <- cbind(label='dada', group=row.names(otab), numOtus=numOtus, otab)
+write.table(df, 
+  "mothur/temp/dada.shared",  # do not change name
+  quote=FALSE, sep="\t", row.names=F
+)
+```
+
+

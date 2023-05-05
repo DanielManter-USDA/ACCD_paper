@@ -1,0 +1,686 @@
+---
+title: "ACC_paper_github"
+author: "Heather Deel"
+date: "2023-05-01"
+output: html_document
+---
+
+This script includes several input file types. Here are descriptions of each input file.
+- AgroEco.picrust2.GIBBs.phyloseq.RDS – this is a phyloseq object created in the miSeq.PICRUSt2.Rmd script that contains PICRUSt2 data.
+- ACCglm.csv – this file contains the total number of ACC copies inferred through PICRUSt2 or directly measured through acdS primer-specific sequencing for each sample. 
+- Rinput.16S PICRUSt2 abundance bar chart phyla.csv – this file contains non-relative abundance information for phyla within each site and slope as determined using the 16S rRNA data. 
+- Rinput.acdS abundance bar chart phyla.csv – this file contains the non-relative abundance information for phyla within each site and slope as determine using the acdS primer-specific data.
+- AgroEco.tx.dada.biom – this file is a .biom file created in the miSeq.PICRUSt2.Rmd script. It contains the OUT abundances per sample.  
+- Megan.Taxonomy.txt – this is a local file that includes the Megan taxonomic database. 
+- myFunctions.R – this file contains custom functions used for concise analyses in R.
+
+```{r setup, include=FALSE}
+require("knitr")
+opts_knit$set(root.dir = "YOUR PATH HERE")
+
+.cran_packages <-  c("dplyr", "eulerr", "ggplot2", "reshape2", "knitr", "phyloseq")
+sapply(c(.cran_packages), require, character.only=TRUE)
+```
+
+## Correlation - Figure 2
+GLM of sequenced acdS gene copies vs 16S PICRUSt2 ACCD gene copies
+Load library and read in data
+```{r load}
+library(ggplot2)
+library(ggpubr)
+
+p <- readRDS("AgroEco.picrust2.GIBBs.phyloseq.RDS")
+p.enzyme <- tax_glom(p, taxrank = "EC")
+write.csv(otu_table(p.enzyme), '16S.totals.csv') # data added to ACCglm
+
+data_glm <- read.csv("ACCglm.csv")
+
+p <- ggplot(data=data_glm, aes(x=acdS, y=PICRUSt2)) +
+  geom_smooth(method="lm", se=TRUE) +
+  geom_point(size=3, aes(color=Site)) +
+    theme(
+        axis.title.x = element_text(size = 16, face = "bold"), 
+        axis.title.y = element_text(size = 16, face = "bold"), 
+        legend.title = element_text(size = 16), 
+        legend.text = element_text(size = 12, colour = "black"), 
+        axis.text.x = element_text(colour = "black", size = 12, face = "bold"),
+        axis.text.y = element_text(colour = "black", size = 12, face = "bold"),
+        strip.text = element_text(colour = "black", size = 16, face = "bold")) + 
+  stat_regline_equation(label.x=1e6, label.y=3.5e7) +
+  stat_cor(aes(label=..rr.label..), label.x=1e6, label.y=3.25e7) +
+  labs(x=bquote(atop(italic("acdS-specific primers"), "(gene copies g"^-1~"soil)")), y=bquote(atop("16S-PICRUSt2", "(ACCD gene copies g"^-1~"soil)"))) + 
+  scale_color_brewer(palette='Set2') +
+  theme_bw()
+p
+# ggsave(p, file='../R_output/Figures/Figure2.png')
+```
+
+# Copy numbers by site and slope for acdS-specific primers - Figure 3A
+```{r stats}
+library(multcompView)
+library(tidyr)
+
+data_glm <- read.csv("ACCglm.csv")
+data_glm$Slope <- factor(data_glm$Slope, levels=c("Summit", "Side", "Toe"))
+
+model = lm(acdS ~ Site*Slope, data=data_glm)
+ANOVA = aov(model)
+summary(ANOVA)
+
+TukeyHSD(x=ANOVA, 'Site', conf.level=0.95)
+TukeyHSD(x=ANOVA, 'Slope', conf.level=0.95)
+
+TUKEY <- TukeyHSD(x=ANOVA, 'Site:Slope', conf.level=0.95)
+pvals <- TUKEY[['Site:Slope']][,4]
+pvals <- data.frame(multcompLetters(pvals)['Letters'])
+pvals$trt <- row.names(pvals)
+pvals <- pvals %>%
+  separate(trt, sep=":", into=c("Site", "Slope"))
+
+data_max <- data_glm %>% 
+  group_by(Site, Slope) %>% 
+  summarize(max = max(acdS, na.rm=TRUE)) %>% 
+  ungroup()
+
+pvals <- data_max %>%
+  left_join(pvals, by=c("Site", "Slope"))
+
+pvals$Slope <- factor(pvals$Slope, levels=c("Summit", "Side", "Toe"))
+
+p <- ggplot(data_glm, aes(x=Slope, y=acdS, fill=Slope)) +
+  facet_wrap(vars(Site)) +
+  geom_boxplot(position=position_dodge(width=0.8)) +
+    theme(axis.text.x = element_text(angle = 90, size = 14, colour = "black", 
+                                   vjust = 0.5, hjust = 1, face= "bold"), 
+        axis.title.y = element_text(size = 16, face = "bold"), 
+        legend.title = element_text(size = 16), 
+        legend.text = element_text(size = 12, colour = "black"), 
+        axis.text.y = element_text(colour = "black", size = 12, face = "bold"),
+        strip.text = element_text(colour = "black", size = 16, face = "bold")) + 
+  ylim(c(0,4.5e7)) +
+ geom_text(data=pvals, aes(label=Letters, y=max), vjust=-1, position=position_dodge(width=0.8)) +
+  labs(x = "", y = bquote(atop(italic("acdS-specific primers"), "(gene copies g"^-1~"soil)")), fill = "Slope") + 
+  scale_fill_brewer(palette='Set2') +
+  theme_bw()
+p
+# ggsave(p, file='../R_output/Figures/Figure3a.png')
+```
+
+# Copy numbers by site and slope for 16S-PICRUSt2 - Figure 3B
+```{r stats}
+library(multcompView)
+
+data_glm <- read.csv("ACCglm.csv")
+data_glm$Slope <- factor(data_glm$Slope, levels=c("Summit", "Side", "Toe"))
+
+model = lm(PICRUSt2~Site*Slope, data=data_glm)
+ANOVA = aov(model)
+summary(ANOVA)
+
+TukeyHSD(x=ANOVA, 'Site', conf.level=0.95)
+TukeyHSD(x=ANOVA, 'Slope', conf.level=0.95)
+
+TUKEY <- TukeyHSD(x=ANOVA, 'Site:Slope', conf.level=0.95)
+pvals <- TUKEY[['Site:Slope']][,4]
+pvals <- data.frame(multcompLetters(pvals)['Letters'])
+pvals$trt <- row.names(pvals)
+pvals <- pvals %>%
+  separate(trt, sep=":", into=c("Site", "Slope"))
+
+data_max <- data_glm %>% 
+  group_by(Site, Slope) %>%
+  summarize(max = max(PICRUSt2, na.rm=TRUE)) %>%
+  ungroup()
+
+pvals <- data_max %>%
+  left_join(pvals, by=c("Site", "Slope"))
+
+pvals$Slope <- factor(pvals$Slope, levels=c("Summit", "Side", "Toe"))
+
+p <- ggplot(data_glm, aes(x=Slope, y=PICRUSt2, fill=Slope)) +
+  facet_wrap(vars(Site)) +
+  geom_boxplot(position=position_dodge(width=0.8)) +
+    theme(axis.text.x = element_text(angle = 90, size = 14, colour = "black", 
+                                   vjust = 0.5, hjust = 1, face= "bold"), 
+        axis.title.y = element_text(size = 16, face = "bold"), 
+        legend.title = element_text(size = 16), 
+        legend.text = element_text(size = 12, colour = "black"), 
+        axis.text.y = element_text(colour = "black", size = 12, face = "bold"),
+        strip.text = element_text(colour = "black", size = 16, face = "bold")) + 
+  ylim(c(0,4.5e7)) +
+  geom_text(data=pvals, aes(label=Letters, y=max), vjust=-1, position=position_dodge(width=0.8)) +
+  labs(x = "", y = bquote(atop("PICRUSt2", "(gene copies g"^-1~"soil)")), fill = "Slope") + 
+  scale_fill_brewer(palette='Set2') +
+  theme_bw()
+p
+# ggsave(p, file='../R_output/Figures/Figure3b.png')
+```
+
+## Abundance bar chart - 16S-PICRUSt2 - Figure 4A
+```{r}
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(knitr)
+library(tidyr)
+
+data <- read.csv("Rinput.16S PICRUSt2 abundance bar chart phyla.csv")
+colnames(data)
+
+#select columns
+dat <- data[ , c("Site", "Slope", "Actinobacteria", "Proteobacteria", "Bacteriodetes")]
+
+#convert data frame from a "wide" format to a "long" format
+dat_long <- melt(dat, id = c("Site","Slope"), variable.name = "Phyla")
+dat_long
+
+#keep data in order not alphabetical
+dat_long$Site <- factor(dat_long$Site,levels=unique(dat_long$Site))
+dat_long$Slope <- factor(dat_long$Slope,levels=unique(dat_long$Slope))
+
+#create graph
+p <- ggplot(dat_long, aes(x = Slope, fill = Phyla, y = value)) + 
+  facet_wrap(vars(Site), strip.position = "top") +
+  theme(strip.background = element_blank(), strip.placement = "outside") +
+  geom_bar(stat = "identity") + 
+  theme(axis.text.x = element_text(angle = 90, size = 14, colour = "black", 
+                                   vjust = 0.5, hjust = 1, face= "bold"), 
+        axis.title.y = element_text(size = 16, face = "bold"), 
+        legend.title = element_text(size = 16, face = "bold"), 
+        legend.text = element_text(size = 12, face = "bold", colour = "black"), 
+        axis.text.y = element_text(colour = "black", size = 12, face = "bold"),
+        strip.text = element_text(colour = "black", size = 16, face = "bold"),
+        panel.background = element_rect(fill = "white", colour = "white", size = 0.5, linetype = "solid"),
+        panel.grid.major = element_blank()) + 
+  scale_y_continuous(limits = c(0,45000000)) + 
+  labs(x = "", y = "Abundance", fill = "Phyla") + 
+  scale_fill_brewer(palette = "Set2") +
+  theme_bw()
+p
+# ggsave(p, file='../R_output/Figures/Figure4a.png')
+```
+
+### Abundance bar chart - acdS - Figure 4B
+```{r}
+data <- read.csv("Rinput.acdS abundance bar chart phyla.csv")
+
+colnames(data)
+
+#select columns
+dat <- data[ , c("Site", "Slope", "Actinobacteria", "Unclassified", "Proteobacteria")]  
+
+#convert data frame from a "wide" format to a "long" format
+dat_long <- melt(dat, id = c("Site","Slope"), variable.name = "Phyla")
+dat_long
+
+#keep data in order not alphabetical
+dat_long$Site <- factor(dat_long$Site,levels=unique(dat_long$Site))
+dat_long$Slope <- factor(dat_long$Slope,levels=unique(dat_long$Slope))
+
+#create graph
+p <- ggplot(dat_long, aes(x = Slope, fill = Phyla, y = value)) + 
+  facet_wrap(vars(Site), strip.position = "top") +
+  theme(strip.background = element_blank(), strip.placement = "outside") +
+  geom_bar(stat = "identity") + 
+  theme(axis.text.x = element_text(angle = 90, size = 14, colour = "black", 
+                                   vjust = 0.5, hjust = 1, face= "bold"), 
+        axis.title.y = element_text(size = 16, face = "bold"), 
+        legend.title = element_text(size = 16, face = "bold"), 
+        legend.text = element_text(size = 12, face = "bold", colour = "black"), 
+        axis.text.y = element_text(colour = "black", size = 12, face = "bold"),
+        strip.text = element_text(colour = "black", size = 16, face = "bold"),
+        panel.background = element_rect(fill = "white", colour = "white", size = 0.5, linetype = "solid"),
+        panel.grid.major = element_blank()) + 
+  scale_y_continuous(limits = c(0,45000000)) + 
+  labs(x = "", y = "Abundance", fill = "Phyla") + 
+  scale_fill_brewer(palette = "Set2") +
+  theme_bw()
+p
+# ggsave(p, file='../R_output/Figures/Figure4b.png')
+```
+
+### Phylogenetic tree - 16S-PICRUSt2 - Figure 5
+```{r}
+setwd("/Users/heatherdeel/Desktop/USDA/ACC_paper/code/16S_tree_emu")
+
+##### Figure 5A #####
+### install (if necessary) and load required CRAN or BioConductor packages
+.cran_packages <- c("ape", "ggplot2", "ggthemes", "dplyr", "tidyr", "remotes", "iNEXT",
+                    "seqinr", "Biostrings", "ape", "phangorn")
+new.packages <- .cran_packages[!(.cran_packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+.bioc_packages <- c("phyloseq", "microbiome", "ggtree", "msa")
+new.packages <- .bioc_packages[!(.bioc_packages %in% installed.packages()[,'Package'])]
+# if (length(new.packages)) source('http://bioconductor.org/biocLite.R')
+# if (length(new.packages)) BiocManager::install(new.packages)
+
+.remotes_packages <- c("metagMisc")
+new.packages <- .remotes_packages[!(.remotes_packages %in% installed.packages()[,'Package'])]
+if (length(new.packages)) remotes::install_github("vmikk/metagMisc")
+
+sapply(c(.cran_packages, .bioc_packages, .remotes_packages), require, character.only=TRUE)
+
+# functions
+set_panel_size <- function(p=NULL, g=ggplotGrob(p), file=NULL,
+                           margin = unit(1,"mm"),
+                           width=unit(4, "cm"),
+                           height=unit(4, "cm")){
+  
+  panels <- grep("panel", g$layout$name)
+  panel_index_w<- unique(g$layout$l[panels])
+  panel_index_h<- unique(g$layout$t[panels])
+  nw <- length(panel_index_w)
+  nh <- length(panel_index_h)
+  
+  if(getRversion() < "3.3.0"){
+    
+    # the following conversion is necessary
+    # because there is no `[<-`.unit method
+    # so promoting to unit.list allows standard list indexing
+    g$widths <- grid:::unit.list(g$widths)
+    g$heights <- grid:::unit.list(g$heights)
+    
+    g$widths[panel_index_w] <-  rep(list(width),  nw)
+    g$heights[panel_index_h] <- rep(list(height), nh)
+    
+  } else {
+    
+    g$widths[panel_index_w] <-  rep(width,  nw)
+    g$heights[panel_index_h] <- rep(height, nh)
+    
+  }
+  
+  if(!is.null(file))
+    ggsave(file, g,
+           width = convertWidth(sum(g$widths) + margin,
+                                unitTo = "in", valueOnly = TRUE),
+           height = convertHeight(sum(g$heights) + margin,
+                                  unitTo = "in", valueOnly = TRUE))
+  
+  invisible(g)
+}
+
+print.fixed <- function(x) grid.draw(x)
+
+# Wrangle data into phyloseq
+# create a phyloseq object with all 16S data
+otu <- data.frame(import_biom('AgroEco.tx.dada.biom'), check.names=F)
+otu <- otu[,c(1:36)]
+
+taxa <- read.csv('AgroEco.taxonomy.csv')
+taxa <- separate(taxa, taxonomy, into = c('kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'), sep = ";")
+row.names(taxa) <- row.names(otu)
+taxa <- taxa[,c('kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species')]
+
+meta <- read.csv('meta_data.csv')
+row.names(meta) <- meta$sample_name
+
+ps <- phyloseq(sample_data(meta),
+               otu_table(otu, taxa_are_rows=T), 
+               tax_table(as.matrix(taxa)))
+
+ps_glom <- tax_glom(ps, taxrank='species')
+
+# get acdS taxa
+gibbs <- read.csv('gibbs_subset.tsv', sep='\t')
+gibbs.sub <- gibbs[gibbs$sample %in% names(otu),]
+acc_taxa <- unique(gibbs.sub[gibbs.sub$function. == "K01505", 'taxon'])
+acc_species <- taxa[rownames(taxa) %in% acc_taxa, 'species']
+
+# now need to subset the original phyloseq object with only acdS taxa
+ps_sub <- subset_taxa(ps_glom, species %in% acc_species)
+
+# create reference tree
+ref <- readDNAStringSet("AgroEco.dada.rep_seqs.fasta")
+ref.sub <- ref[acc_taxa]
+ref.aln <- msaMuscle(ref.sub)
+ref.aln <- msaConvert(ref.aln, type="seqinr::alignment")
+D <- dist.alignment(ref.aln, matrix='similarity')
+tre <- nj(D)
+tre <- ladderize(tre)
+plot(tre)
+
+# create final phyloseq object
+ps_final <- merge_phyloseq(ps_sub, tre)
+ps_rel <- transform_sample_counts(ps_final, function(x) x / sum(x))
+
+P.glom <- tax_glom(ps_rel, taxrank='genus', NArm=FALSE)
+
+# plot tree
+p <- ggtree(phy_tree(P.glom), layout='circular', ladderize=T)
+
+dd <- psmelt(P.glom)
+data <- merge(p$data, dd, by.x="label", by.y="OTU", rm.na=T)
+
+data$Treatment <- data$geo_loc_city
+data.mean <- aggregate(Abundance ~ Treatment+x+y+node+isTip+angle+kingdom+phylum+class+order+family+genus, data, mean)
+data.mean <- as.data.frame(data.mean %>% 
+                             arrange(y) %>%
+                             group_by(y) %>%
+                             mutate(rank=row_number()
+                             ))
+
+cols = rep(gdocs_pal()(10), times=5)
+
+spacing <- 0.25
+data.mean$xdodge <- data.mean$x + (data.mean$rank * spacing)
+data.max <- aggregate(xdodge ~ x+y+node+isTip+angle+kingdom+phylum+class+order+family+genus, data.mean, max)
+data.max$Class <- paste('', data.max$class, sep='')
+data.max$Order <- paste('', data.max$order, sep='')
+data.max$Family <- paste('', data.max$family, sep='')
+data.max$Genus <- paste('', data.max$genus, sep='')
+data.max$myLabel <- data.max$genus
+
+p <- p + geom_tiplab(data=data.max, aes(x=xdodge+0.05, y=y, label=myLabel, color=phylum), size=3)
+p <- p + geom_point(data=data.mean, aes(x=xdodge, y=y, fill=Treatment, size=Abundance), shape=21, na.rm=F)
+p <- p + theme(legend.position="right")
+p <- p + scale_color_manual(values=cols)
+p <- p + ggplot2::xlim(0, 1.8)
+p <- p + labs(color="Phylum")
+p
+```
+
+### Phylogenetic tree - acdS - Figure 6
+```{r}
+setwd("/Users/heatherdeel/Desktop/USDA/ACC_paper/code/acds_tree")
+
+### Check and load for required packages
+.cran_packages <-  c("ggplot2", "gridExtra", "reshape2", "scales", "ggthemes", "devtools", 
+                     "seqinr", "Biostrings", "ape", "phangorn")
+new.packages <- .cran_packages[!(.cran_packages%in% installed.packages()[,'Package'])]
+if (length(new.packages)) install.packages(new.packages, repos='http://cran.us.r-project.org', dependencies=T)
+
+.bioc_packages <- c("phyloseq", "genomes", "msa")
+new.packages <- .bioc_packages[!(.bioc_packages %in% installed.packages()[,'Package'])]
+# if (length(new.packages)) BiocManager::install(new.packages)
+
+
+.remotes_packages <- c("metagMisc")
+new.packages <- .remotes_packages[!(.remotes_packages %in% installed.packages()[,'Package'])]
+if (length(new.packages)) remotes::install_github("vmikk/metagMisc")
+
+sapply(c(.cran_packages, .bioc_packages, .remotes_packages), require, character.only=TRUE)
+
+### Check for upgrades 
+#biocLite("BiocUpgrade")
+#biocLite()
+#packageVersion("dada2") # must be version 1.4
+
+# note: can skip to line 334 for analysis for this figure
+# don't need to rerun between here and 334
+
+# This section is for the dada2 pipeline and doesn't need to be run again
+if (FALSE) {
+  ### Get data 
+  set.seed(100)
+  pathF <- file.path(wdir, "fastq/Forward")
+  pathR <- file.path(wdir, "fastq/Reverse")
+  cutpathF <- file.path(pathF, "cut")
+  cutpathR <- file.path(pathR, "cut")
+  filtpathF <- file.path(pathF, "filtered")
+  filtpathR <- file.path(pathR, "filtered")
+  fastqFs <- sort(list.files(pathF, pattern="fastq"))
+  fastqRs <- sort(list.files(pathR, pattern="fastq"))
+  
+  if (length(fastqFs) != length(fastqRs)) {
+    stop("Forward and reverse files do not match.")
+  } 
+
+  ### Remove Primers w/ cutadapt
+  # cutadapt must be installed and in your path
+  
+  for(i in 1:length(fastqFs)) {
+    adapter = "-g ^TSTABGCSAARCGBGAVGACTGC"
+    infile = file.path(pathF, fastqFs[i])
+    outfile = file.path(cutpathF, fastqFs[i])
+    cmd <- paste('cutadapt', adapter, '-o', outfile, infile, sep=' ')
+    system(cmd)
+  }
+  
+  for(i in 1:length(fastqRs)) {
+    adapter = "-g ^GTBACVGMGCASACSACGATRTAG"
+    infile = file.path(pathR, fastqRs[i])
+    outfile = file.path(cutpathR, fastqRs[i])
+    cmd <- paste('cutadapt', adapter, '-o', outfile, infile, sep=' ')
+    system(cmd)
+  }
+
+  ### Trim and filter 
+  ii <- sample(length(fastqFs), 6)
+  for(i in ii) { print(plotQualityProfile(file.path(cutpathF, fastqFs[i])) + ggtitle("Fwd")) }
+  
+  ii <- sample(length(fastqRs), 6)
+  for(i in ii) { print(plotQualityProfile(file.path(cutpathR, fastqRs[i])) + ggtitle("Rev")) }
+  
+  
+  # Filtering: THESE PARAMETERS ARENT OPTIMAL FOR ALL DATASETS
+  filterAndTrim(fwd=file.path(cutpathF, fastqFs), filt=file.path(filtpathF, fastqFs),
+                rev=file.path(cutpathR, fastqRs), filt.rev=file.path(filtpathR, fastqRs),
+                truncQ=2, maxEE=5, maxN=0, rm.phix=TRUE,
+                compress=TRUE, verbose=TRUE, multithread=TRUE)
+
+  ### Infer sequence variants 
+  filtFs <- list.files(filtpathF, pattern="fastq", full.names=TRUE)
+  filtRs <- list.files(filtpathR, pattern="fastq", full.names=TRUE)
+  sample.names <- sapply(strsplit(basename(filtFs), "_"), `[`, 1) 
+  sample.namesR <- sapply(strsplit(basename(filtRs), "_"), `[`, 1) 
+  if(!identical(sample.names, sample.namesR)) {
+    stop("Forward and reverse files do not match.")
+  }
+  names(filtFs) <- sample.names
+  names(filtRs) <- sample.names
+  
+  # Learn error rates
+  set.seed(100)
+  errF <- learnErrors(filtFs, nreads=1e6, multithread=TRUE)
+  errR <- learnErrors(filtRs, nreads=1e6, multithread=TRUE)
+  
+  # Sample inference and merger of paired-end reads
+  mergers <- vector("list", length(sample.names))
+  names(mergers) <- sample.names
+  
+  for(sam in sample.names) {
+    cat("Processing:", sam, "\n")
+    derepF <- derepFastq(filtFs[[sam]])
+    ddF <- dada(derepF, err=errF, multithread=TRUE)
+    derepR <- derepFastq(filtRs[[sam]])
+    ddR <- dada(derepR, err=errR, multithread=TRUE)
+    merger <- mergePairs(ddF, derepF, ddR, derepR)
+    mergers[[sam]] <- merger
+  }
+  rm(derepF); rm(derepR)
+  
+  # Construct sequence table
+  seqtab <- makeSequenceTable(mergers)
+
+  ### remove chimeras & assign taxonomy 
+  # Remove chimeras
+  seqtab <- removeBimeraDenovo(seqtab, method="pooled", multithread=TRUE)
+  dim(seqtab)
+  table(nchar(getSequences(seqtab)))
+  
+  # Get taxonomy from MEGAN and Blast
+  tax <- read.csv('Megan.Taxonomy.txt', sep="\t")
+  row.names(tax) <- tax$ID
+  tax <- tax[,2:8]
+  tax[tax == ""] <- "unclassified"
+  
+  for (i in 1:nrow(tax)){
+    if (tax[i,1] == "unclassified"){
+      tax[i, 1:7] <- "unclassified"
+    } else if (tax[i,2] == "unclassified"){
+      kingdom <- paste(tax[i,1], "unclassified", sep = " ")
+      tax[i, 2:7] <- kingdom
+    } else if (tax[i,3] == "unclassified"){
+      phylum <- paste(tax[i,2], "unclassified", sep = " ")
+      tax[i, 3:7] <- phylum
+    } else if (tax[i,4] == "unclassified"){
+      class <- paste(tax[i,3], "unclassified", sep = " ")
+      tax[i, 4:7] <- class
+    } else if (tax[i,5] == "unclassified"){
+      order <- paste(tax[i,4], "unclassified", sep = " ")
+      tax[i, 5:7] <- order
+    } else if (tax[i,6] == "unclassified"){
+      family <- paste(tax[i,5], "unclassified", sep = " ")
+      tax[i, 6:7] <- family
+    } else if (tax[i,7] == "unclassified"){
+      genus <- paste(tax[i,6], "unclassified", sep = " ")
+      tax[i, 7] <- genus
+    }
+  }
+  
+  OTU <- otu_table(seqtab, taxa_are_rows=FALSE)
+  colnames(OTU) <- row.names(tax)
+  
+  # Write to disk
+  saveRDS(seqtab, "seqtab_final.rds")
+  saveRDS(tax, "tax_final.rds")
+  
+  # Representative Sequences
+  numOtus <- ncol(seqtab)
+  uniquesToFasta(seqtab, 
+                 ids=paste0("OTU", seq(numOtus)),
+                 fout='dada.fasta'  # do not change name
+  )
+  
+  ### phyloseq 
+  # Make a data.frame holding the sample data
+  samples.out <- rownames(seqtab)
+  sampdf <- colsplit(string=samples.out, pattern="\\.", names=c("Year", "Site", "Slope", "Strip", "Depth"))
+  sampdf$Site[sampdf$Site==1] <- "Sterling"
+  sampdf$Site[sampdf$Site==2] <- "Stratton"
+  sampdf$Site[sampdf$Site==3] <- "Walsh"
+  
+  sampdf$Slope[sampdf$Slope==1] <- "Summit"
+  sampdf$Slope[sampdf$Slope==2] <- "Side"
+  sampdf$Slope[sampdf$Slope==3] <- "Toe"
+  
+  rownames(sampdf) <- samples.out
+  
+  # create reference tree
+  ref <- readDNAStringSet("dada.fasta")
+  ref.aln <- msaMuscle(ref)
+  ref.aln <- msaConvert(ref.aln, type="seqinr::alignment")
+  D <- dist.alignment(ref.aln, matrix='similarity')
+  tre <- nj(D)
+  tre <- ladderize(tre)
+  plot(tre)
+  
+  # Construct phyloseq object (straightforward from dada2 outputs)
+  ps <- phyloseq(otu_table(OTU, errorIfNULL=FALSE), 
+                 sample_data(sampdf), 
+                 tax_table(as.matrix(tax)),
+                 tre)
+  
+  saveRDS(ps, 'acdS.ps.rds')
+  
+### save files 
+  dat <- psmelt(ps)
+  write.csv(dat, file='otus-with-sample-data.csv')
+  
+  # create mothur shared file
+  numOtus <- nrow(tax_table(ps))
+  dat <- otu_table(ps)
+  names <- c()
+  for (i in seq(1,numOtus)) {
+    names[i] <- paste('OTU', i, sep='')
+  }
+  colnames(dat) <- names
+  df <- cbind(label='dada', group=row.names(dat), numOtus=numOtus, dat)
+  write.csv(df, file='otu-table.shared', row.names=FALSE)
+  
+  dat <- tax_table(ps)
+  write.csv(dat, file='tax-table.csv')
+  
+  dat <- colnames(otu_table(ps))
+  write.csv(dat, file='rep_seqs.fasta')
+  
+  save.image("acdS.dada2.rdata")
+  }
+
+# richness estimates - acdS
+source("myFunctions.R")
+
+ps <- readRDS('acdS.ps.rds')
+
+rich <- estimate_richness(ps, split=TRUE)
+write.csv(rich, file='ACC.alpha.diversity.csv', row.names=TRUE)
+
+# Alpha Diversity - graph
+p <- plot_richness(ps, x="Site", measures=c("Observed", "Shannon", "InvSimpson"))
+gDF <- p$data
+gDF$Slope <- factor(gDF$Slope, levels=c('Summit', 'Side', 'Toe'))
+
+colors <- RColorBrewer::brewer.pal(3, 'Set1')
+g <- ggplot(gDF, aes(x=Slope, y=value, fill=Slope)) +
+  geom_boxplot(alpha=1) + 
+  facet_grid(variable~Site, scales='free') + 
+  labs(y="Diversity Index") + 
+  theme(strip.text.x=element_text(size=10, colour='blue', angle=0)) +
+  theme(strip.text.y=element_text(size=10, colour='blue', angle=0)) +
+  scale_fill_manual(values=colors)
+g
+
+g <- set_panel_size(p, width=unit(3,"in"), height=unit(3,"in"))
+# ggsave(filename='ACC.Alpha.Diversity.png', device='png', plot=g, units='in', height=8, width=11)
+
+# acdS tree
+library("ggtree")
+# read output from DADA2 pipeline
+ps <- readRDS('acdS.ps.rds')
+
+# filter OTU 100 since not classified as bacteria
+badTaxa = c("OTU100")
+goodTaxa <- setdiff(taxa_names(ps), badTaxa)
+ps <- prune_taxa(goodTaxa, ps)
+
+P.rel <- transform_sample_counts(ps, function(x) x / sum(x))
+rank <- 'Genus'
+P.glom <- tax_glom(P.rel, taxrank=rank, NArm=FALSE)
+
+p <- ggtree(phy_tree(P.glom), layout='circular', ladderize=F)
+
+dd <- psmelt(P.glom)
+data <- merge(p$data, dd, by.x="label", by.y="OTU", rm.na=T)
+
+data$Treatment <- data$Site
+data.mean <- aggregate(Abundance ~ Treatment+x+y+node+isTip+angle+Kingdom+Phylum+Class+Order+Family+Genus, data, mean)
+data.mean <- as.data.frame(data.mean %>% 
+                             arrange(y) %>%
+                             group_by(y) %>%
+                             mutate(rank=row_number()
+                             ))
+
+cols = rep(gdocs_pal()(10), times=5)
+
+spacing <- 0.05
+data.mean$xdodge <- data.mean$x + (data.mean$rank * spacing)
+data.max <- aggregate(xdodge ~ x+y+node+isTip+angle+Kingdom+Phylum+Class+Order+Family+Genus, data.mean, max)
+data.max$Class <- paste('', data.max$Class, sep='')
+data.max$Order <- paste('', data.max$Order, sep='')
+data.max$Family <- paste('', data.max$Family, sep='')
+data.max$Genus <- paste('', data.max$Genus, sep='')
+data.max$myLabel <- data.max$Genus
+
+p <- p + geom_tiplab(data=data.max, aes(x=xdodge+0.05, y=y, label=myLabel, color=Phylum), size=3)
+p <- p + geom_point(data=data.mean, aes(x=xdodge, y=y, fill=Treatment, size=Abundance), shape=21, na.rm=F) 
+p <- p + theme(legend.position="right")
+p <- p + scale_color_manual(values=cols)
+p <- p + ggplot2::xlim(0, 1.8)
+p
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
