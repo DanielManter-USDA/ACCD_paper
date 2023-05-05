@@ -1,0 +1,47 @@
+KO,Category,Name,Short
+K10814,Biocontrol,hcnA: glycine dehydrogenase (cyanide-forming),hcnA
+K01575,Biocontrol,budA: acetolactate decarboxylase,budA
+K18009,Biocontrol,"budC: (S,S)-butanediol dehydrogenase",budC
+K01180,Biocontrol,"E3.2.1.6: endo-1,3(4)-beta-gulcanase",E3.2.1.6
+K01183,Biocontrol,E3.2.1.14: chitinase,E3.2.1.14
+K19982,Biocontrol,prnD: aminopyrrolnitrin oxygenase,prnD
+K15431,Biocontrol,phlD: phloroglucinol synthase,phlD
+K15661,Biocontrol,ituA: iturin family lipopeptide synthetase A,ituA
+K15667,Biocontrol,fenA: fengycin family lipopeptide synthetase D,fenA
+K15654,Biocontrol,srfAA: surfactin family lipopeptide synthetase A,srfAA
+K16017,Biocontrol,rifM: AHBA synthesis associated protein,rifM
+K13063,Biocontrol,phzE: 2-amino-4-deoxychorismate synthase,phzE
+K04103,Stress,ipdC: indolepyruvate decarboxylase,ipdC
+K01505,Stress,acdS: 1-aminocyclopropane-1-carboxylate deaminase,acdS
+K04781,Siderophore,mbtI: salicylate synthetase,mbtI
+K00216,Siderophore,"entA: 2,3-dihydro-2,3-dihydroxybenzoate dehydrogenase",entA
+K02364,Siderophore,pchB: isochorismate pyruvate lysase,pchB
+K05349,C decomposition,bglX: beta-glucosidase,bglX
+K05350,C decomposition,bglB: beta-glucosidase,bglB
+K01188,C decomposition,E3.2.1.21: beta-glucosidase,E3.2.1.21
+K01426,N decomposition,amiE: amidase,amiE
+K01428,N decomposition,ureC: urease alpha subunit,ureC
+K06137,PO4 solubility,pqqC: pyrroloquinoline-quinone synthase,pqqC
+K01077,P decomposition,phoA: alkaline phosphatase,phoA
+K01113,P decomposition,phoD: alkaline phosphatase,phoD
+K01078,P decomposition,PHO: acid phosphatase,PHO
+K01093,P decomposition,appA: acid phosphatase,appA
+K09474,P decomposition,phoN: acid phosphatase,phoN
+K01130,S decomposition,aslA: arylsulfatase,aslA
+K02588,N-fixation,nifH: nitrogenase Fe protein,nifH
+K02591,N-fixation,nifD: nitrogenase Mo-Fe protein,nifD
+K02586,N-fixation,nifK: nitrogenase Mo-Fe protein,nifK
+K10944,Nitrification,pmoA-amoA: methane/ammonia monooxygenase,pmoA-amoA
+K10535,Nitrification,hao: hydroxylamine dehydrogenase,hao
+K00362,Dissimilatory nitrate reduction,nirB: nitrite reductase (NADH),nirB
+K00363,Dissimilatory nitrate reduction,nirD: nitrite reductase (NADH),nirD
+K03385,Dissimilatory nitrate reduction,nrfA: nitrite reductase (cytochrome c-552),nrfA
+K00366,Assimilatory nitrate reduction,nirA: ferrodoxin-nitrite reductase,nirA
+K17877,Assimilatory nitrate reduction,NIT-6: nitrite reductase (NAD(P)H),NIT-6
+K00370,Denitrification,narG: nitrate reductase,narG
+K00371,Denitrification,narH: nitrate reductase,narH
+K00368,Denitrification,nirK: nitrite reductase (NO forming),nirK
+K15864,Denitrification,nirS: nitrite reductase (NO forming),nirS
+K04561,Denitrification,norB: nitric oxide reductase,norB
+K02305,Denitrification,norC: nitric oxide reductase,norC
+K00376,Denitrification,nosZ: nitrous-oxide reductase,nosZ
